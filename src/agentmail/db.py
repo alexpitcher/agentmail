@@ -151,6 +151,17 @@ class Database:
         with self.connect() as db:
             return db.execute("SELECT * FROM emails WHERE raw_sha256 = ?", (raw_sha256,)).fetchone()
 
+    def find_email_by_provider_message_id(self, provider: str, provider_message_id: str) -> sqlite3.Row | None:
+        with self.connect() as db:
+            return db.execute(
+                "SELECT * FROM emails WHERE provider = ? AND provider_message_id = ?",
+                (provider, provider_message_id),
+            ).fetchone()
+
+    def find_email_by_message_id(self, message_id: str) -> sqlite3.Row | None:
+        with self.connect() as db:
+            return db.execute("SELECT * FROM emails WHERE message_id = ?", (message_id,)).fetchone()
+
     def get_email(self, email_id: str) -> sqlite3.Row | None:
         with self.connect() as db:
             return db.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()

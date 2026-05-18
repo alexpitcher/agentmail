@@ -62,6 +62,11 @@ class Settings:
     blocked_extensions: set[str]
     api_url: str
     forward_copy_to: str | None
+    resend_api_key: str | None
+    resend_api_url: str
+    resend_sync_to: str | None
+    resend_sync_page_limit: int
+    resend_sync_max_pages: int
 
     @classmethod
     def load(cls) -> "Settings":
@@ -89,6 +94,11 @@ class Settings:
             blocked_extensions=blocked,
             api_url=env.get("AGENTMAIL_API_URL", f"http://127.0.0.1:{bind_port}"),
             forward_copy_to=env.get("AGENTMAIL_FORWARD_COPY_TO") or None,
+            resend_api_key=env.get("AGENTMAIL_RESEND_API_KEY") or None,
+            resend_api_url=env.get("AGENTMAIL_RESEND_API_URL", "https://api.resend.com"),
+            resend_sync_to=env.get("AGENTMAIL_RESEND_SYNC_TO") or None,
+            resend_sync_page_limit=int(env.get("AGENTMAIL_RESEND_SYNC_PAGE_LIMIT", "100")),
+            resend_sync_max_pages=int(env.get("AGENTMAIL_RESEND_SYNC_MAX_PAGES", "10")),
         )
 
     def ensure_storage_dirs(self) -> None:

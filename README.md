@@ -4,7 +4,7 @@ AgentMail is a generic email ingestion and retrieval layer for AI agents.
 
 Forward useful emails to `bot@alexpitcher.co.uk`, let Cloudflare Email Routing hand the raw message to AgentMail, then later ask an agent to find, search, and pull the email body or attachments into a workspace.
 
-AgentMail does not run tasks when email arrives. It stores email assets so OpenClaw, Claude Code, VS Code workflows, and other local agents can retrieve them later.
+AgentMail does not run tasks when email arrives. It stores email assets so OpenClaw, Claude Code, VS Code workflows, and other local agents can retrieve them later. If Resend Receiving is configured as a backup destination, AgentMail can also import missed messages from Resend after downtime.
 
 ## What It Does
 
@@ -30,6 +30,27 @@ References:
 
 Cloudflare currently does not support Email Routing messages larger than 25 MiB, so send large assets as links rather than attachments.
 
+## Resend Backup Inbox
+
+For downtime recovery, route Cloudflare Email Routing to the AgentMail Worker and configure the Worker to forward copies to Resend Receiving and a human mailbox. Resend stores received emails and exposes the raw RFC822 message through the Receiving API, so `agentmail sync` can later import anything AgentMail missed while offline.
+
+Set the Resend sync configuration in `.env`:
+
+```env
+AGENTMAIL_RESEND_API_KEY=re_xxxxxxxxx
+AGENTMAIL_RESEND_SYNC_TO=bot@bot.alexpitcher.co.uk
+AGENTMAIL_RESEND_SYNC_PAGE_LIMIT=100
+AGENTMAIL_RESEND_SYNC_MAX_PAGES=10
+```
+
+Then import missed mail:
+
+```bash
+agentmail sync --to bot@bot.alexpitcher.co.uk
+```
+
+`agentmail sync` lists received emails from Resend, filters by `AGENTMAIL_RESEND_SYNC_TO`, downloads the raw message for matching items, and ingests it using the same parser and attachment safety rules as Cloudflare. Messages already stored by AgentMail are skipped by Resend received-email ID, raw hash, or matching `Message-ID`.
+
 ## Docker Host Deployment
 
 Copy the example env file:
@@ -44,6 +65,8 @@ Edit `.env` and set at least:
 AGENTMAIL_INGEST_TOKEN=use-a-long-random-token
 AGENTMAIL_API_TOKEN=use-a-different-long-random-token
 AGENTMAIL_ALLOWED_SENDERS=gpt@wantwhat.co.uk,alex@example.com
+AGENTMAIL_RESEND_API_KEY=re_xxxxxxxxx
+AGENTMAIL_RESEND_SYNC_TO=bot@bot.alexpitcher.co.uk
 ```
 
 AgentMail checks its local store on startup and reports whether it has mail in the recent window. The default is 10 days:
@@ -167,9 +190,10 @@ agentmail attachments <email_id>
 agentmail pull <email_id> --to ./.agentmail/<email_id>
 agentmail context <email_id>
 agentmail latest --has-attachments --json
+agentmail sync --to bot@bot.alexpitcher.co.uk
 ```
 
-`agentmail sync` exists as a compatibility no-op because Cloudflare pushes messages into AgentMail. There is no mailbox to sync.
+`agentmail sync` imports from Resend Receiving when `AGENTMAIL_RESEND_API_KEY` is configured. Cloudflare itself still pushes directly into AgentMail and cannot be polled for history.
 
 ## Cloudflare Worker
 
@@ -194,10 +218,16 @@ Set the secret:
 wrangler secret put AGENTMAIL_INGEST_TOKEN
 ```
 
-Optionally set a human safety copy destination:
+Optionally set backup copy destinations. Use a comma-separated value to send copies to both Resend Receiving and a human mailbox:
 
 ```bash
 wrangler secret put FORWARD_COPY_TO
+```
+
+Example secret value:
+
+```text
+bot@bot.alexpitcher.co.uk,15pitchera@gmail.com
 ```
 
 Deploy:
@@ -313,9 +343,13 @@ Not implemented:
 
 ## Backfilling Mail
 
-Cloudflare Email Routing cannot be polled as a mailbox, so AgentMail cannot automatically recover the last 10 days of mail unless those messages were already pushed into it.
+Cloudflare Email Routing cannot be polled as a mailbox, so AgentMail cannot automatically recover historical mail from Cloudflare alone. If Cloudflare forwarded copies to Resend Receiving, use:
 
-To backfill history, export raw `.eml` files from the mailbox that received safety copies and import them:
+```bash
+agentmail sync --to bot@bot.alexpitcher.co.uk
+```
+
+Without Resend, export raw `.eml` files from the mailbox that received safety copies and import them:
 
 ```bash
 agentmail ingest-file path/to/message.eml --from sender@example.com --to bot@alexpitcher.co.uk

@@ -113,9 +113,16 @@ class IngestService:
         envelope_to: str | None = None,
         provider_message_id: str | None = None,
         actor: str = "local",
+        dedupe_message_id: bool = False,
     ) -> dict[str, str]:
         if len(raw_bytes) > self.settings.max_email_bytes:
             raise ValueError(f"email exceeds max size of {self.settings.max_email_bytes} bytes")
+
+        if provider_message_id:
+            duplicate = self.db.find_email_by_provider_message_id(provider, provider_message_id)
+            if duplicate:
+                self.db.audit(now_iso(), "email_duplicate", email_id=duplicate["id"], actor=actor)
+                return {"status": "duplicate", "email_id": duplicate["id"], "raw_sha256": duplicate["raw_sha256"]}
 
         raw_sha256 = hashlib.sha256(raw_bytes).hexdigest()
         duplicate = self.db.find_email_by_sha(raw_sha256)
@@ -134,6 +141,18 @@ class IngestService:
             parsed_error = str(exc)
         else:
             parsed_error = None
+
+        if dedupe_message_id and parsed and parsed.message_id:
+            duplicate = self.db.find_email_by_message_id(parsed.message_id)
+            if duplicate:
+                self.db.audit(
+                    now_iso(),
+                    "email_duplicate",
+                    email_id=duplicate["id"],
+                    actor=actor,
+                    detail={"message_id": parsed.message_id, "provider_message_id": provider_message_id},
+                )
+                return {"status": "duplicate", "email_id": duplicate["id"], "raw_sha256": duplicate["raw_sha256"]}
 
         received_at = parsed.received_at if parsed else None
         email_id = generate_email_id(raw_sha256, received_at)

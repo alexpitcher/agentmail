@@ -23,6 +23,11 @@ def make_settings(tmp_path: Path) -> Settings:
         blocked_extensions={".sh", ".exe", ".ps1"},
         api_url="http://testserver",
         forward_copy_to=None,
+        resend_api_key=None,
+        resend_api_url="https://api.resend.com",
+        resend_sync_to=None,
+        resend_sync_page_limit=100,
+        resend_sync_max_pages=10,
     )
 
 

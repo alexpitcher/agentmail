@@ -4,6 +4,16 @@ export interface Env {
   FORWARD_COPY_TO?: string;
 }
 
+function copyRecipients(value?: string): string[] {
+  if (!value) {
+    return [];
+  }
+  return value
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item.length > 0);
+}
+
 export default {
   async email(message: ForwardableEmailMessage, env: Env): Promise<void> {
     const rawArrayBuffer = await new Response(message.raw).arrayBuffer();
@@ -26,8 +36,8 @@ export default {
       return;
     }
 
-    if (env.FORWARD_COPY_TO) {
-      await message.forward(env.FORWARD_COPY_TO);
+    for (const recipient of copyRecipients(env.FORWARD_COPY_TO)) {
+      await message.forward(recipient);
     }
   },
 };

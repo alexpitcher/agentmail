@@ -10,6 +10,9 @@ from rich.console import Console
 from rich.table import Table
 
 from agentmail.config import Settings, get_settings
+from agentmail.db import Database
+from agentmail.ingest import IngestService
+from agentmail.resend import ResendSyncError, sync_resend_received
 
 
 app = typer.Typer(help="AgentMail email asset retrieval CLI.")
@@ -225,10 +228,40 @@ def open(email_id: str) -> None:
 
 
 @app.command()
-def sync() -> None:
-    """No-op for compatibility; Cloudflare pushes mail into AgentMail."""
-    health(json_output=False)
-    console.print("Sync complete: AgentMail uses push ingestion, so there is no mailbox to poll.")
+def sync(
+    to: str | None = typer.Option(None, "--to", help="Only import Resend mail sent to this address."),
+    page_limit: int | None = typer.Option(None, "--page-limit", min=1, max=100),
+    max_pages: int | None = typer.Option(None, "--max-pages", min=1),
+    json_output: bool = typer.Option(False, "--json"),
+) -> None:
+    """Import missed mail from Resend Receiving, if configured."""
+    settings = get_settings()
+    db = Database(settings.db_path)
+    db.init()
+    service = IngestService(settings, db)
+    try:
+        result = sync_resend_received(
+            settings,
+            service,
+            target_to=to,
+            page_limit=page_limit,
+            max_pages=max_pages,
+        )
+    except ResendSyncError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    data = result.as_dict()
+    if json_output:
+        _print_json(data)
+    else:
+        target = to or settings.resend_sync_to or "all receiving addresses"
+        console.print(
+            "Resend sync complete for "
+            f"{target}: {result.imported} imported, {result.duplicates} duplicates, "
+            f"{result.skipped} skipped, {result.scanned} scanned."
+        )
+        for error in result.errors:
+            console.print(f"Warning: {error}", style="yellow")
 
 
 @app.command()

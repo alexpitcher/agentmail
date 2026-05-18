@@ -9,3 +9,4 @@ AGENTMAIL_INGEST_URL = "https://agentmail.alexpitcher.co.uk/ingest/cloudflare"
 # wrangler secret put AGENTMAIL_INGEST_TOKEN
 # Optional:
 # wrangler secret put FORWARD_COPY_TO
+# Example: bot@bot.alexpitcher.co.uk,15pitchera@gmail.com
