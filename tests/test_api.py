@@ -28,6 +28,11 @@ def test_api_ingest_search_show_pull_context(tmp_path: Path) -> None:
     assert listed.status_code == 200
     assert listed.json()["items"][0]["id"] == email_id
 
+    health = client.get("/health")
+    assert health.status_code == 200
+    assert "mail_window" in health.json()
+    assert health.json()["mail_window"]["lookback_days"] == 10
+
     searched = client.get("/emails/search", params={"q": "homepage assets"}, headers={"Authorization": "Bearer api-token"})
     assert searched.status_code == 200
     assert searched.json()["items"][0]["id"] == email_id

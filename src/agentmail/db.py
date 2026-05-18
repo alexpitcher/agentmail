@@ -216,6 +216,28 @@ class Database:
         with self.connect() as db:
             return list(db.execute(sql, params))
 
+    def latest_email(self) -> sqlite3.Row | None:
+        with self.connect() as db:
+            return db.execute(
+                """
+                SELECT * FROM emails
+                ORDER BY COALESCE(received_at, ingested_at) DESC
+                LIMIT 1
+                """
+            ).fetchone()
+
+    def count_emails_since(self, since: str) -> int:
+        with self.connect() as db:
+            row = db.execute(
+                """
+                SELECT COUNT(*) AS count
+                FROM emails
+                WHERE COALESCE(received_at, ingested_at) >= ?
+                """,
+                (since,),
+            ).fetchone()
+        return int(row["count"] if row else 0)
+
     def upsert_fts(self, values: dict[str, str]) -> None:
         with self.connect() as db:
             db.execute("DELETE FROM email_fts WHERE email_id = ?", (values["email_id"],))

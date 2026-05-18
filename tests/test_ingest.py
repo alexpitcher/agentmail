@@ -19,6 +19,7 @@ def make_settings(tmp_path: Path) -> Settings:
         allowed_senders=[],
         max_email_bytes=26_214_400,
         max_attachment_bytes=26_214_400,
+        startup_mail_lookback_days=10,
         blocked_extensions={".sh", ".exe", ".ps1"},
         api_url="http://testserver",
         forward_copy_to=None,

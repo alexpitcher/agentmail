@@ -58,6 +58,7 @@ class Settings:
     allowed_senders: list[str]
     max_email_bytes: int
     max_attachment_bytes: int
+    startup_mail_lookback_days: int
     blocked_extensions: set[str]
     api_url: str
     forward_copy_to: str | None
@@ -84,6 +85,7 @@ class Settings:
             allowed_senders=[item.lower() for item in _as_list(env.get("AGENTMAIL_ALLOWED_SENDERS"))],
             max_email_bytes=int(env.get("AGENTMAIL_MAX_EMAIL_BYTES", "26214400")),
             max_attachment_bytes=int(env.get("AGENTMAIL_MAX_ATTACHMENT_BYTES", "26214400")),
+            startup_mail_lookback_days=int(env.get("AGENTMAIL_STARTUP_MAIL_LOOKBACK_DAYS", "10")),
             blocked_extensions=blocked,
             api_url=env.get("AGENTMAIL_API_URL", f"http://127.0.0.1:{bind_port}"),
             forward_copy_to=env.get("AGENTMAIL_FORWARD_COPY_TO") or None,

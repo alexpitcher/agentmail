@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import shutil
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Annotated, Any
+from typing import Annotated, Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse
@@ -15,6 +18,8 @@ from agentmail.db import Database
 from agentmail.ingest import IngestService, now_iso
 from agentmail.security import bearer_token
 from agentmail.storage import write_json
+
+logger = logging.getLogger(__name__)
 
 
 class PullRequest(BaseModel):
@@ -29,7 +34,41 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     db = Database(app_settings.db_path)
     db.init()
     ingest_service = IngestService(app_settings, db)
-    app = FastAPI(title="AgentMail", version=__version__)
+
+    def run_mail_window_check(app: FastAPI) -> dict[str, Any]:
+        lookback_days = app_settings.startup_mail_lookback_days
+        since = (
+            datetime.now(timezone.utc) - timedelta(days=lookback_days)
+        ).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        newest = db.latest_email()
+        count = db.count_emails_since(since)
+        result = {
+            "lookback_days": lookback_days,
+            "since": since,
+            "emails_in_window": count,
+            "newest_email_id": newest["id"] if newest else None,
+            "newest_email_received_at": (newest["received_at"] or newest["ingested_at"]) if newest else None,
+            "ok": count > 0,
+            "note": None if count > 0 else "No stored mail found inside the startup lookback window.",
+        }
+        app.state.startup_mail_check = result
+        if count > 0:
+            logger.info("AgentMail startup mail check ok: %s emails since %s", count, since)
+        else:
+            logger.warning(
+                "AgentMail startup mail check found no mail since %s. Cloudflare Email Routing cannot be polled for history; import .eml files to backfill.",
+                since,
+            )
+        return result
+
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        app.state.startup_mail_check = {}
+        run_mail_window_check(app)
+        yield
+
+    app = FastAPI(title="AgentMail", version=__version__, lifespan=lifespan)
+    app.state.startup_mail_check = {}
 
     def require_api_auth(authorization: str | None = Header(default=None)) -> None:
         if app_settings.auth_disabled:
@@ -82,7 +121,13 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/health")
     def health() -> dict[str, Any]:
-        return {"ok": True, "service": "agentmail", "version": __version__}
+        mail_check = app.state.startup_mail_check or run_mail_window_check(app)
+        return {
+            "ok": True,
+            "service": "agentmail",
+            "version": __version__,
+            "mail_window": mail_check,
+        }
 
     @app.post("/ingest/cloudflare")
     async def ingest_cloudflare(

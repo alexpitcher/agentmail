@@ -46,6 +46,12 @@ AGENTMAIL_API_TOKEN=use-a-different-long-random-token
 AGENTMAIL_ALLOWED_SENDERS=gpt@wantwhat.co.uk,alex@example.com
 ```
 
+AgentMail checks its local store on startup and reports whether it has mail in the recent window. The default is 10 days:
+
+```env
+AGENTMAIL_STARTUP_MAIL_LOOKBACK_DAYS=10
+```
+
 Run it:
 
 ```bash
@@ -121,6 +127,8 @@ Health:
 ```http
 GET /health
 ```
+
+The health response includes a `mail_window` object with the newest stored email and the number of locally stored emails inside the startup lookback window. This is an operational freshness check, not a mailbox sync.
 
 Cloudflare ingest:
 
@@ -291,6 +299,7 @@ Implemented:
 - Cloudflare Worker project.
 - OpenClaw skill.
 - Dockerfile, Compose, `.env.example`, `.gitignore`, and `.dockerignore`.
+- Startup freshness check for the local mail store, defaulting to the last 10 days.
 
 Not implemented:
 
@@ -301,3 +310,13 @@ Not implemented:
 - OCR.
 - R2/S3 backend.
 - MCP wrapper.
+
+## Backfilling Mail
+
+Cloudflare Email Routing cannot be polled as a mailbox, so AgentMail cannot automatically recover the last 10 days of mail unless those messages were already pushed into it.
+
+To backfill history, export raw `.eml` files from the mailbox that received safety copies and import them:
+
+```bash
+agentmail ingest-file path/to/message.eml --from sender@example.com --to bot@alexpitcher.co.uk
+```
