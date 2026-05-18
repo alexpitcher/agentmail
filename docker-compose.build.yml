@@ -1,0 +1,4 @@
+services:
+  agentmail:
+    build: .
+    image: ghcr.io/alexpitcher/agentmail:local

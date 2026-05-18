@@ -49,10 +49,17 @@ AGENTMAIL_ALLOWED_SENDERS=gpt@wantwhat.co.uk,alex@example.com
 Run it:
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 ```
 
-By default Compose binds the service to `127.0.0.1:8787` on the Docker host and stores durable data in `./data`, mounted into the container at `/var/lib/agentmail`. The image includes a `/health` healthcheck.
+By default Compose runs `ghcr.io/alexpitcher/agentmail:latest`, binds the service to `127.0.0.1:8787` on the Docker host, and stores durable data in `./data`, mounted into the container at `/var/lib/agentmail`. The image includes a `/health` healthcheck.
+
+To build locally from source instead of pulling GHCR:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.build.yml up -d --build
+```
 
 For public ingestion, put Caddy, Nginx, or Cloudflare Tunnel in front of only:
 

@@ -1,6 +1,6 @@
 services:
   agentmail:
-    build: .
+    image: ghcr.io/alexpitcher/agentmail:latest
     container_name: agentmail
     restart: unless-stopped
     ports:
