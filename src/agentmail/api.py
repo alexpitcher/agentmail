@@ -448,6 +448,133 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "warnings": warnings,
         }
 
+    # ── Share token helpers ──────────────────────────────────────────────────
+
+    def _validate_share_token(token: str) -> None:
+        row = db.get_share_token(token)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Share token not found or expired")
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        if row["expires_at"] <= now:
+            db.delete_share_token(token)
+            raise HTTPException(status_code=404, detail="Share token not found or expired")
+
+    def _share_attachment_url(token: str, attachment_id: str) -> str:
+        base = app_settings.api_url.rstrip("/")
+        return f"{base}/share/{token}/attachments/{attachment_id}"
+
+    def _share_email_response(row: Any, token: str) -> dict[str, Any]:
+        body_text_path = resolve_storage_path(row["body_text_path"])
+        body_html_path = resolve_storage_path(row["body_html_path"])
+        attachments = []
+        for att in db.list_attachments(row["id"]):
+            if att["blocked"]:
+                continue
+            attachments.append({
+                "id": att["id"],
+                "filename": att["filename"],
+                "mime_type": att["content_type"] or att["detected_type"] or "application/octet-stream",
+                "size": att["size_bytes"],
+                "download_url": _share_attachment_url(token, att["id"]),
+            })
+        return {
+            "id": row["id"],
+            "from": row["header_from"] or row["envelope_from"],
+            "to": row["header_to"] or row["envelope_to"],
+            "subject": row["subject"],
+            "received_at": row["received_at"] or row["ingested_at"],
+            "text": body_text_path.read_text(encoding="utf-8") if body_text_path and body_text_path.exists() else "",
+            "html": body_html_path.read_text(encoding="utf-8") if body_html_path and body_html_path.exists() else "",
+            "attachments": attachments,
+        }
+
+    # ── Share token management ───────────────────────────────────────────────
+
+    @app.post("/share-tokens", dependencies=[Depends(require_api_auth)])
+    def create_share_token() -> dict[str, Any]:
+        db.delete_expired_share_tokens()
+        token = db.create_share_token(app_settings.share_token_ttl_seconds)
+        db.audit(now_iso(), "share_token_created", actor="api")
+        return {
+            "token": token,
+            "expires_in_seconds": app_settings.share_token_ttl_seconds,
+            "latest_url": f"{app_settings.api_url.rstrip('/')}/share/{token}/emails/latest",
+        }
+
+    @app.delete("/share-tokens/{token}", dependencies=[Depends(require_api_auth)])
+    def revoke_share_token(token: str) -> dict[str, str]:
+        if db.get_share_token(token) is None:
+            raise HTTPException(status_code=404, detail="Share token not found")
+        db.delete_share_token(token)
+        db.audit(now_iso(), "share_token_revoked", actor="api")
+        return {"status": "revoked"}
+
+    # ── Share token read-only routes (no auth header needed) ─────────────────
+
+    @app.get("/share/{token}/emails/latest")
+    def share_latest_email(token: str) -> dict[str, Any]:
+        _validate_share_token(token)
+        rows = db.list_emails(limit=1)
+        if not rows:
+            raise HTTPException(status_code=404, detail="No emails found")
+        return _share_email_response(rows[0], token)
+
+    @app.get("/share/{token}/emails/{email_id}")
+    def share_get_email(token: str, email_id: str) -> dict[str, Any]:
+        _validate_share_token(token)
+        row = db.get_email(email_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        return _share_email_response(row, token)
+
+    @app.get("/share/{token}/emails/{email_id}/attachments")
+    def share_list_attachments(token: str, email_id: str) -> dict[str, Any]:
+        _validate_share_token(token)
+        if db.get_email(email_id) is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        attachments = [
+            {
+                "id": att["id"],
+                "filename": att["filename"],
+                "mime_type": att["content_type"] or att["detected_type"] or "application/octet-stream",
+                "size": att["size_bytes"],
+                "blocked": bool(att["blocked"]),
+                "download_url": _share_attachment_url(token, att["id"]) if not att["blocked"] else None,
+            }
+            for att in db.list_attachments(email_id)
+        ]
+        return {"email_id": email_id, "attachments": attachments}
+
+    @app.get("/share/{token}/attachments/{attachment_id}")
+    def share_download_attachment(token: str, attachment_id: str) -> Response:
+        _validate_share_token(token)
+        att = db.get_attachment_by_id(attachment_id)
+        if att is None:
+            raise HTTPException(status_code=404, detail="Attachment not found")
+        if att["blocked"]:
+            raise HTTPException(status_code=403, detail="Attachment is blocked")
+        path = resolve_storage_path(att["storage_path"])
+        if not path or not path.exists():
+            raise HTTPException(status_code=404, detail="Stored attachment not found")
+        filename = att["safe_filename"] or att["filename"] or "attachment"
+        content_type = att["content_type"] or att["detected_type"] or "application/octet-stream"
+        return Response(
+            path.read_bytes(),
+            media_type=content_type,
+            headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        )
+
+    @app.post("/emails/{email_id}/reparse-attachments", dependencies=[Depends(require_api_auth)])
+    def reparse_attachments(email_id: str) -> dict[str, Any]:
+        if db.get_email(email_id) is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        try:
+            result = ingest_service.reparse_attachments(email_id)
+        except KeyError:
+            raise HTTPException(status_code=404, detail="Email not found")
+        db.audit(now_iso(), "email_attachments_reparsed", email_id=email_id, actor="api", detail=result)
+        return result
+
     @app.get("/emails/{email_id}/context", response_class=PlainTextResponse, dependencies=[Depends(require_api_auth)])
     def context(email_id: str) -> str:
         try:

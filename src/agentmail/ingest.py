@@ -43,8 +43,8 @@ def _relative(root: Path, path: Path | None) -> str | None:
         return str(path)
 
 
-def _attachment_id(index: int) -> str:
-    return f"att_{index:03d}"
+def _attachment_id(email_id: str, index: int) -> str:
+    return f"{email_id}_att_{index:03d}"
 
 
 def _make_manifest(email: dict[str, Any], attachments: list[dict[str, Any]]) -> dict[str, Any]:
@@ -93,6 +93,86 @@ class IngestService:
     def __init__(self, settings: Settings, database: Database):
         self.settings = settings
         self.db = database
+
+    def reparse_attachments(self, email_id: str) -> dict[str, Any]:
+        """Re-parse and re-insert attachments for an email that has none in the DB."""
+        email_row = self.db.get_email(email_id)
+        if email_row is None:
+            raise KeyError(email_id)
+        existing = self.db.list_attachments(email_id)
+        if existing:
+            return {"status": "skipped", "reason": "attachments_already_present", "count": len(existing)}
+
+        raw_path = self.settings.storage_root / email_row["raw_path"] if email_row["raw_path"] else None
+        if raw_path is None or not raw_path.exists():
+            return {"status": "error", "reason": "raw_email_not_found"}
+
+        raw_bytes = raw_path.read_bytes()
+        try:
+            parsed = parse_email(raw_bytes)
+        except Exception as exc:
+            return {"status": "error", "reason": f"parse_failed: {exc}"}
+
+        if not parsed.attachments:
+            return {"status": "skipped", "reason": "no_attachments_in_raw_email"}
+
+        email_dir = self.settings.storage_root / "emails" / email_id
+        attachments_dir = email_dir / "attachments"
+        blocked_attachments_dir = email_dir / "blocked_attachments"
+        extracted_dir = email_dir / "extracted_text"
+
+        attachment_rows: list[dict[str, Any]] = []
+        used_filenames: set[str] = set()
+        for index, attachment in enumerate(parsed.attachments, start=1):
+            att_id = _attachment_id(email_id, index)
+            safe_name = dedupe_filename(sanitize_filename(attachment.filename, att_id), used_filenames)
+            size = len(attachment.payload)
+            blocked = is_blocked_extension(safe_name, self.settings.blocked_extensions)
+            block_reason = "blocked_extension" if blocked else None
+            if size > self.settings.max_attachment_bytes:
+                blocked = True
+                block_reason = "attachment_too_large"
+            att_sha = hashlib.sha256(attachment.payload).hexdigest()
+            storage_path = (blocked_attachments_dir if blocked else attachments_dir) / safe_name
+            extracted_path: Path | None = None
+            if not storage_path.exists():
+                write_bytes(storage_path, attachment.payload)
+            if not blocked:
+                text = extract_text(safe_name, attachment.content_type, attachment.payload)
+                if text:
+                    extracted_path = extracted_dir / f"{att_id}.txt"
+                    if not extracted_path.exists():
+                        write_text(extracted_path, text)
+            row = {
+                "id": att_id,
+                "email_id": email_id,
+                "filename": attachment.filename,
+                "safe_filename": safe_name,
+                "content_type": attachment.content_type,
+                "detected_type": mimetypes.guess_type(safe_name)[0],
+                "size_bytes": size,
+                "sha256": att_sha,
+                "storage_path": _relative(self.settings.storage_root, storage_path),
+                "extracted_text_path": _relative(self.settings.storage_root, extracted_path),
+                "is_inline": 1 if attachment.is_inline else 0,
+                "content_id": attachment.content_id,
+                "blocked": 1 if blocked else 0,
+                "block_reason": block_reason,
+                "created_at": now_iso(),
+            }
+            attachment_rows.append(row)
+
+        self.db.insert_attachments_for_email(email_id, attachment_rows)
+        for row in attachment_rows:
+            self.db.audit(
+                now_iso(),
+                "attachment_blocked" if row["blocked"] else "attachment_saved",
+                email_id=email_id,
+                attachment_id=row["id"],
+                actor="repair",
+                detail={"filename": row["filename"], "reason": row.get("block_reason")},
+            )
+        return {"status": "repaired", "inserted": len(attachment_rows)}
 
     def ingest_cloudflare(self, raw_bytes: bytes, headers: dict[str, str]) -> dict[str, str]:
         return self.ingest_raw(
@@ -202,7 +282,7 @@ class IngestService:
         extracted_text_parts: list[str] = []
         if parsed:
             for index, attachment in enumerate(parsed.attachments, start=1):
-                att_id = _attachment_id(index)
+                att_id = _attachment_id(email_id, index)
                 safe_name = dedupe_filename(sanitize_filename(attachment.filename, att_id), used_filenames)
                 size = len(attachment.payload)
                 blocked = is_blocked_extension(safe_name, self.settings.blocked_extensions)
@@ -275,9 +355,8 @@ class IngestService:
         manifest = _make_manifest(email_row, attachment_rows)
         write_json(manifest_path, manifest)
 
-        self.db.insert_email(email_row)
+        self.db.insert_email_with_attachments(email_row, attachment_rows)
         for row in attachment_rows:
-            self.db.insert_attachment(row)
             self.db.audit(
                 now_iso(),
                 "attachment_blocked" if row["blocked"] else "attachment_saved",
