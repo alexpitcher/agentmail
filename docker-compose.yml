@@ -4,7 +4,7 @@ services:
     container_name: agentmail
     restart: unless-stopped
     ports:
-      - "127.0.0.1:8787:8787"
+      - "8787:8787"
     volumes:
       - ./data:/var/lib/agentmail
     env_file:
