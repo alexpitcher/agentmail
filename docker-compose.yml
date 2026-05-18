@@ -9,3 +9,19 @@ services:
       - ./data:/var/lib/agentmail
     env_file:
       - .env
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: agentmail-cloudflared
+    restart: unless-stopped
+    network_mode: "service:agentmail"
+    depends_on:
+      - agentmail
+    command:
+      - tunnel
+      - --no-autoupdate
+      - run
+      - --url
+      - http://agentmail:8787
+      - --token
+      - ${CLOUDFLARED_TUNNEL_TOKEN}

@@ -28,6 +28,7 @@ def make_settings(tmp_path: Path) -> Settings:
         resend_sync_to=None,
         resend_sync_page_limit=100,
         resend_sync_max_pages=10,
+        resend_webhook_token=None,
     )
 
 
