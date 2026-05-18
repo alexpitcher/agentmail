@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -40,6 +41,19 @@ def test_api_ingest_search_show_pull_context(tmp_path: Path) -> None:
     shown = client.get(f"/emails/{email_id}", headers={"Authorization": "Bearer api-token"})
     assert shown.status_code == 200
     assert shown.json()["attachments"][0]["safe_filename"] == "brief.txt"
+
+    bundle = client.get("/email-bundle/latest", headers={"Authorization": "Bearer api-token"})
+    assert bundle.status_code == 200
+    bundled_attachment = bundle.json()["items"][0]["attachments"][0]
+    assert bundled_attachment["safe_filename"] == "brief.txt"
+    assert base64.b64decode(bundled_attachment["content_base64"]).startswith(b"Homepage copy")
+
+    downloaded = client.get(
+        f"/emails/{email_id}/attachments/att_001/download",
+        headers={"Authorization": "Bearer api-token"},
+    )
+    assert downloaded.status_code == 200
+    assert downloaded.content.startswith(b"Homepage copy")
 
     destination = tmp_path / "pull"
     pulled = client.post(
