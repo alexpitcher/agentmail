@@ -6,6 +6,7 @@ from email import policy
 from email.message import EmailMessage, Message
 from email.parser import BytesParser
 from email.utils import parsedate_to_datetime
+from datetime import timezone
 
 from agentmail.models import ParsedAttachment, ParsedEmail
 
@@ -21,8 +22,8 @@ def _date_to_iso(value: str | None) -> str | None:
     try:
         dt = parsedate_to_datetime(value)
         if dt.tzinfo is None:
-            return dt.isoformat()
-        return dt.astimezone().isoformat()
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     except Exception:
         return None
 
