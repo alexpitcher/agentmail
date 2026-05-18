@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
@@ -10,6 +15,10 @@ from agentmail.ingest import IngestService
 
 
 class ResendSyncError(RuntimeError):
+    pass
+
+
+class ResendWebhookError(RuntimeError):
     pass
 
 
@@ -99,6 +108,78 @@ def _best_envelope_to(addresses: list[str], expected: str | None) -> str | None:
     return addresses[0]
 
 
+def _decode_svix_secret(secret: str) -> bytes:
+    if secret.startswith("whsec_"):
+        value = secret.split("_", 1)[1]
+        value += "=" * (-len(value) % 4)
+        return base64.b64decode(value)
+    return secret.encode("utf-8")
+
+
+def verify_resend_webhook(body: bytes, headers: dict[str, str], secret: str, *, tolerance_seconds: int = 300) -> dict[str, Any]:
+    normalized = {key.lower(): value for key, value in headers.items()}
+    webhook_id = normalized.get("svix-id") or normalized.get("webhook-id")
+    timestamp = normalized.get("svix-timestamp") or normalized.get("webhook-timestamp")
+    signature = normalized.get("svix-signature") or normalized.get("webhook-signature")
+    if not webhook_id or not timestamp or not signature:
+        raise ResendWebhookError("Missing Resend webhook signature headers")
+
+    try:
+        timestamp_int = int(timestamp)
+    except ValueError as exc:
+        raise ResendWebhookError("Invalid Resend webhook timestamp") from exc
+    if abs(int(time.time()) - timestamp_int) > tolerance_seconds:
+        raise ResendWebhookError("Resend webhook timestamp is outside the allowed tolerance")
+
+    signed_content = webhook_id.encode("utf-8") + b"." + timestamp.encode("utf-8") + b"." + body
+    expected = base64.b64encode(hmac.new(_decode_svix_secret(secret), signed_content, hashlib.sha256).digest()).decode("ascii")
+    signatures = [part.split(",", 1)[1] for part in signature.split() if part.startswith("v1,")]
+    if not any(hmac.compare_digest(expected, candidate) for candidate in signatures):
+        raise ResendWebhookError("Invalid Resend webhook signature")
+
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise ResendWebhookError("Invalid Resend webhook JSON") from exc
+
+
+def ingest_resend_received_email(
+    settings: Settings,
+    ingest_service: IngestService,
+    email_id: str,
+    *,
+    client: ResendReceivingClient | None = None,
+) -> dict[str, str]:
+    if not settings.resend_api_key and client is None:
+        raise ResendSyncError("AGENTMAIL_RESEND_API_KEY is not configured")
+
+    existing = ingest_service.db.find_email_by_provider_message_id("resend-receiving", email_id)
+    if existing:
+        return {"status": "duplicate", "email_id": existing["id"], "raw_sha256": existing["raw_sha256"]}
+
+    active_client = client or ResendReceivingClient(settings.resend_api_key or "", base_url=settings.resend_api_url)
+    should_close = client is None
+    try:
+        detail = active_client.get_received(email_id)
+        raw = detail.get("raw") or {}
+        download_url = raw.get("download_url")
+        if not download_url:
+            raise ResendSyncError(f"{email_id}: raw download URL is unavailable")
+        raw_bytes = active_client.download_raw(download_url)
+        return ingest_service.ingest_raw(
+            raw_bytes,
+            provider="resend-receiving",
+            envelope_from=detail.get("from"),
+            envelope_to=_best_envelope_to(list(detail.get("to") or []), settings.resend_sync_to),
+            provider_message_id=email_id,
+            actor="resend-webhook",
+            dedupe_message_id=True,
+        )
+    finally:
+        if should_close:
+            active_client.close()
+
+
 def sync_resend_received(
     settings: Settings,
     ingest_service: IngestService,
@@ -145,23 +226,7 @@ def sync_resend_received(
                     continue
 
                 try:
-                    detail = active_client.get_received(email_id)
-                    raw = detail.get("raw") or {}
-                    download_url = raw.get("download_url")
-                    if not download_url:
-                        result.skipped += 1
-                        result.errors.append(f"{email_id}: raw download URL is unavailable")
-                        continue
-                    raw_bytes = active_client.download_raw(download_url)
-                    ingest = ingest_service.ingest_raw(
-                        raw_bytes,
-                        provider="resend-receiving",
-                        envelope_from=detail.get("from") or item.get("from"),
-                        envelope_to=_best_envelope_to(list(detail.get("to") or to_addresses), effective_target),
-                        provider_message_id=email_id,
-                        actor="resend-sync",
-                        dedupe_message_id=True,
-                    )
+                    ingest = ingest_resend_received_email(settings, ingest_service, email_id, client=active_client)
                 except Exception as exc:
                     result.errors.append(f"{email_id}: {exc}")
                     continue

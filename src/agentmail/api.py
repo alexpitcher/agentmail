@@ -17,7 +17,13 @@ from agentmail.config import Settings, get_settings
 from agentmail.context import email_context
 from agentmail.db import Database
 from agentmail.ingest import IngestService, now_iso
-from agentmail.resend import ResendSyncError, sync_resend_received
+from agentmail.resend import (
+    ResendSyncError,
+    ResendWebhookError,
+    ingest_resend_received_email,
+    sync_resend_received,
+    verify_resend_webhook,
+)
 from agentmail.security import bearer_token
 from agentmail.storage import write_json
 
@@ -211,6 +217,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             detail={**result.as_dict(), "to": request.to or app_settings.resend_sync_to},
         )
         return result.as_dict()
+
+    @app.post("/ingest/resend")
+    async def ingest_resend(request: Request) -> dict[str, Any]:
+        if not app_settings.resend_webhook_secret:
+            raise HTTPException(status_code=503, detail="Resend webhook secret is not configured")
+        raw = await request.body()
+        try:
+            event = verify_resend_webhook(raw, dict(request.headers), app_settings.resend_webhook_secret)
+        except ResendWebhookError as exc:
+            db.audit(now_iso(), "resend_webhook_rejected", actor="resend-webhook", detail={"reason": str(exc)})
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        if event.get("type") != "email.received":
+            return {"status": "ignored", "type": event.get("type")}
+        data = event.get("data") or {}
+        email_id = data.get("email_id")
+        if not email_id:
+            raise HTTPException(status_code=400, detail="Resend webhook is missing data.email_id")
+        try:
+            result = ingest_resend_received_email(app_settings, ingest_service, email_id)
+        except ResendSyncError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
+        db.audit(
+            now_iso(),
+            "resend_webhook_ingested",
+            email_id=result.get("email_id"),
+            actor="resend-webhook",
+            detail={"resend_email_id": email_id, "status": result.get("status")},
+        )
+        return result
 
     @app.post("/ingest/cloudflare")
     async def ingest_cloudflare(
