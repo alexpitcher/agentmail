@@ -1,0 +1,21 @@
+From: Client Example <client@example.com>
+To: bot+clientsite@alexpitcher.co.uk
+Subject: Website assets with files
+Message-ID: <attachments@example.com>
+Date: Mon, 18 May 2026 15:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="agentmail-boundary"
+
+--agentmail-boundary
+Content-Type: text/plain; charset=utf-8
+
+Here are the homepage assets and a short brief.
+
+--agentmail-boundary
+Content-Type: text/plain; charset=utf-8
+Content-Disposition: attachment; filename="../../brief.txt"
+
+Homepage copy:
+Use the blue logo and the updated hero message.
+
+--agentmail-boundary--

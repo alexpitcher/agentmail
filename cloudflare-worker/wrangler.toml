@@ -1,0 +1,11 @@
+name = "agentmail-email-worker"
+main = "src/index.ts"
+compatibility_date = "2026-05-18"
+
+[vars]
+AGENTMAIL_INGEST_URL = "https://agentmail.alexpitcher.co.uk/ingest/cloudflare"
+
+# Set secrets with:
+# wrangler secret put AGENTMAIL_INGEST_TOKEN
+# Optional:
+# wrangler secret put FORWARD_COPY_TO

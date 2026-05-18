@@ -1,0 +1,21 @@
+From: Client Example <client@example.com>
+To: bot@alexpitcher.co.uk
+Subject: Script attachment
+Message-ID: <malicious@example.com>
+Date: Mon, 18 May 2026 16:00:00 +0000
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="agentmail-malicious"
+
+--agentmail-malicious
+Content-Type: text/plain; charset=utf-8
+
+Please see attached.
+
+--agentmail-malicious
+Content-Type: text/x-shellscript
+Content-Disposition: attachment; filename="run-me.sh"
+
+#!/bin/sh
+echo bad idea
+
+--agentmail-malicious--
