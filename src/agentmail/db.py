@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import secrets
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -144,6 +146,12 @@ class Database:
                     actor TEXT,
                     detail_json TEXT
                 );
+
+                CREATE TABLE IF NOT EXISTS share_tokens (
+                    token TEXT PRIMARY KEY,
+                    created_at TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                );
                 """
             )
 
@@ -179,6 +187,34 @@ class Database:
         sql = f"INSERT INTO attachments ({', '.join(columns)}) VALUES ({placeholders})"
         with self.connect() as db:
             db.execute(sql, [values[column] for column in columns])
+
+    def insert_email_with_attachments(self, email_values: dict[str, Any], attachment_values: list[dict[str, Any]]) -> None:
+        """Insert email row and all attachment rows in a single transaction."""
+        email_cols = [c for c in EMAIL_COLUMNS if c in email_values]
+        att_sqls = []
+        for att in attachment_values:
+            att_cols = [c for c in ATTACHMENT_COLUMNS if c in att]
+            att_sqls.append((att_cols, att))
+        with self.connect() as db:
+            db.execute(
+                f"INSERT INTO emails ({', '.join(email_cols)}) VALUES ({', '.join('?' for _ in email_cols)})",
+                [email_values[c] for c in email_cols],
+            )
+            for att_cols, att in att_sqls:
+                db.execute(
+                    f"INSERT INTO attachments ({', '.join(att_cols)}) VALUES ({', '.join('?' for _ in att_cols)})",
+                    [att[c] for c in att_cols],
+                )
+
+    def insert_attachments_for_email(self, email_id: str, attachment_values: list[dict[str, Any]]) -> None:
+        """Insert attachment rows for an existing email (repair operation)."""
+        with self.connect() as db:
+            for att in attachment_values:
+                att_cols = [c for c in ATTACHMENT_COLUMNS if c in att]
+                db.execute(
+                    f"INSERT INTO attachments ({', '.join(att_cols)}) VALUES ({', '.join('?' for _ in att_cols)})",
+                    [att[c] for c in att_cols],
+                )
 
     def list_attachments(self, email_id: str) -> list[sqlite3.Row]:
         with self.connect() as db:
@@ -299,6 +335,36 @@ class Database:
         """
         with self.connect() as db:
             return list(db.execute(sql, params))
+
+    def get_attachment_by_id(self, attachment_id: str) -> sqlite3.Row | None:
+        with self.connect() as db:
+            return db.execute("SELECT * FROM attachments WHERE id = ?", (attachment_id,)).fetchone()
+
+    def create_share_token(self, ttl_seconds: int) -> str:
+        token = secrets.token_urlsafe(32)
+        now = datetime.now(timezone.utc)
+        expires_at = (now + timedelta(seconds=ttl_seconds)).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        created_at = now.replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with self.connect() as db:
+            db.execute(
+                "INSERT INTO share_tokens (token, created_at, expires_at) VALUES (?, ?, ?)",
+                (token, created_at, expires_at),
+            )
+        return token
+
+    def get_share_token(self, token: str) -> sqlite3.Row | None:
+        with self.connect() as db:
+            return db.execute("SELECT * FROM share_tokens WHERE token = ?", (token,)).fetchone()
+
+    def delete_share_token(self, token: str) -> None:
+        with self.connect() as db:
+            db.execute("DELETE FROM share_tokens WHERE token = ?", (token,))
+
+    def delete_expired_share_tokens(self) -> int:
+        now = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+        with self.connect() as db:
+            cursor = db.execute("DELETE FROM share_tokens WHERE expires_at <= ?", (now,))
+            return cursor.rowcount
 
     def audit(
         self,

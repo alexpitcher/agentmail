@@ -67,6 +67,7 @@ class Settings:
     resend_sync_to: str | None
     resend_sync_page_limit: int
     resend_sync_max_pages: int
+    share_token_ttl_seconds: int
 
     @classmethod
     def load(cls) -> "Settings":
@@ -99,6 +100,7 @@ class Settings:
             resend_sync_to=env.get("AGENTMAIL_RESEND_SYNC_TO") or None,
             resend_sync_page_limit=int(env.get("AGENTMAIL_RESEND_SYNC_PAGE_LIMIT", "100")),
             resend_sync_max_pages=int(env.get("AGENTMAIL_RESEND_SYNC_MAX_PAGES", "10")),
+            share_token_ttl_seconds=int(env.get("AGENTMAIL_SHARE_TOKEN_TTL_SECONDS", "1200")),
         )
 
     def ensure_storage_dirs(self) -> None:

@@ -48,19 +48,36 @@ def html_to_text(html: str) -> str:
         return BeautifulSoup(html, "html.parser").get_text("\n").strip()
 
 
-def parse_email(raw_bytes: bytes) -> ParsedEmail:
-    message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
-    body_text = ""
-    body_html = ""
-
-    text_body = message.get_body(preferencelist=("plain",))
-    html_body = message.get_body(preferencelist=("html",))
-    if text_body is not None:
-        body_text = _part_text(text_body).strip()
-    if html_body is not None:
-        body_html = _part_text(html_body).strip()
+def _extract_body_from_part(msg: Message) -> tuple[str, str]:
+    """Return (body_text, body_html) from a message or message part."""
+    text_body = msg.get_body(preferencelist=("plain",))
+    html_body = msg.get_body(preferencelist=("html",))
+    body_text = _part_text(text_body).strip() if text_body is not None else ""
+    body_html = _part_text(html_body).strip() if html_body is not None else ""
     if not body_text and body_html:
         body_text = html_to_text(body_html)
+    return body_text, body_html
+
+
+def parse_email(raw_bytes: bytes) -> ParsedEmail:
+    message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
+
+    body_text, body_html = _extract_body_from_part(message)
+
+    # Fallback: some forwarded emails (e.g. Gmail forwarding HTML marketing emails)
+    # embed the original as a message/rfc822 part. get_body() does not descend into
+    # those, so try each one until we find content.
+    if not body_text and not body_html:
+        for part in message.walk():
+            if part.get_content_type() != "message/rfc822":
+                continue
+            payload = part.get_payload()
+            inner = payload[0] if isinstance(payload, list) else payload
+            if not hasattr(inner, "get_body"):
+                continue
+            body_text, body_html = _extract_body_from_part(inner)
+            if body_text or body_html:
+                break
 
     attachments: list[ParsedAttachment] = []
     for part in message.walk():
