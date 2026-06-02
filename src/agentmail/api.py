@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated, Any, AsyncIterator
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
-from fastapi.responses import PlainTextResponse, Response
+from fastapi.responses import FileResponse, PlainTextResponse, Response
 from pydantic import BaseModel, Field
 
 from agentmail import __version__
@@ -186,6 +186,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         if root not in path.parents and path != root:
             raise HTTPException(status_code=500, detail="Invalid stored path")
         return path
+
+    _static_dir = Path(__file__).parent / "static"
+
+    @app.get("/get_email.py", response_class=FileResponse)
+    def serve_get_email_script() -> FileResponse:
+        return FileResponse(_static_dir / "get_email.py", media_type="text/plain", filename="get_email.py")
 
     @app.get("/health")
     def health() -> dict[str, Any]:

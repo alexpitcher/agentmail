@@ -165,6 +165,31 @@ X-AgentMail-Envelope-To: bot+clientsite@alexpitcher.co.uk
 X-AgentMail-Raw-Size: 123456
 ```
 
+Agent script:
+
+```http
+GET /get_email.py
+```
+
+A self-contained Python script (no dependencies beyond the standard library) that agents can download and run to retrieve emails. Requires no installation.
+
+```bash
+curl -s http://localhost:8787/get_email.py -o get_email.py
+python get_email.py --api-key <AGENTMAIL_API_TOKEN>
+```
+
+Options:
+
+```text
+--api-key TOKEN     Required. AgentMail API token.
+--url URL           Base URL of the API (default: http://localhost:8787).
+--latest N          Fetch N most recent emails with full bodies (default: 2).
+--search QUERY      Full-text search; returns matching summaries.
+--id EMAIL_ID       Fetch a specific email by ID.
+--limit N           Result count for list/latest mode (default: 2).
+--json              Print raw JSON instead of a human-readable summary.
+```
+
 Local authenticated endpoints:
 
 ```text
