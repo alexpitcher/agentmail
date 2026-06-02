@@ -189,7 +189,36 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     _static_dir = Path(__file__).parent / "static"
 
-    @app.get("/get_email.py", response_class=FileResponse)
+    @app.get("/", summary="Service discovery", tags=["discovery"])
+    def index() -> dict[str, Any]:
+        return {
+            "service": "agentmail",
+            "version": __version__,
+            "docs": "/docs",
+            "openapi": "/openapi.json",
+            "health": "/health",
+            "agent_script": {
+                "url": "/get_email.py",
+                "description": "Self-contained Python script to retrieve emails. Download and run: python get_email.py --api-key TOKEN",
+            },
+            "endpoints": {
+                "list_emails": "GET /emails",
+                "search_emails": "GET /emails/search?q=QUERY",
+                "get_email": "GET /emails/{id}",
+                "latest_bundle": "GET /email-bundle/latest?latest=N",
+                "pull_email": "POST /emails/{id}/pull",
+                "email_context": "GET /emails/{id}/context",
+            },
+            "auth": "Bearer token required on all /emails and /email-bundle endpoints. Pass as Authorization: Bearer <AGENTMAIL_API_TOKEN>.",
+        }
+
+    @app.get(
+        "/get_email.py",
+        response_class=FileResponse,
+        summary="Download agent email retrieval script",
+        description="Returns get_email.py — a self-contained Python script (stdlib only) for retrieving emails. Usage: python get_email.py --api-key TOKEN [--latest N] [--search QUERY] [--id EMAIL_ID] [--json]",
+        tags=["discovery"],
+    )
     def serve_get_email_script() -> FileResponse:
         return FileResponse(_static_dir / "get_email.py", media_type="text/plain", filename="get_email.py")
 
