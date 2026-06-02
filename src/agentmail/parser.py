@@ -49,12 +49,9 @@ def html_to_text(html: str) -> str:
         return BeautifulSoup(html, "html.parser").get_text("\n").strip()
 
 
-def _extract_body_from_part(msg: Message) -> tuple[str, str]:
-    """Return (body_text, body_html) from a message or message part."""
-    text_body = msg.get_body(preferencelist=("plain",))
-    html_body = msg.get_body(preferencelist=("html",))
-    body_text = _part_text(text_body).strip() if text_body is not None else ""
-    body_html = _part_text(html_body).strip() if html_body is not None else ""
+def _body_strings(text_part: Message | None, html_part: Message | None) -> tuple[str, str]:
+    body_text = _part_text(text_part).strip() if text_part is not None else ""
+    body_html = _part_text(html_part).strip() if html_part is not None else ""
     if not body_text and body_html:
         body_text = html_to_text(body_html)
     return body_text, body_html
@@ -63,7 +60,9 @@ def _extract_body_from_part(msg: Message) -> tuple[str, str]:
 def parse_email(raw_bytes: bytes) -> ParsedEmail:
     message = BytesParser(policy=policy.default).parsebytes(raw_bytes)
 
-    body_text, body_html = _extract_body_from_part(message)
+    text_body = message.get_body(preferencelist=("plain",))
+    html_body = message.get_body(preferencelist=("html",))
+    body_text, body_html = _body_strings(text_body, html_body)
 
     # Fallback: some forwarded emails (e.g. Gmail forwarding HTML marketing emails)
     # embed the original as a message/rfc822 part. get_body() does not descend into
@@ -76,7 +75,9 @@ def parse_email(raw_bytes: bytes) -> ParsedEmail:
             inner = payload[0] if isinstance(payload, list) else payload
             if not hasattr(inner, "get_body"):
                 continue
-            body_text, body_html = _extract_body_from_part(inner)
+            text_body = inner.get_body(preferencelist=("plain",))
+            html_body = inner.get_body(preferencelist=("html",))
+            body_text, body_html = _body_strings(text_body, html_body)
             if body_text or body_html:
                 break
 

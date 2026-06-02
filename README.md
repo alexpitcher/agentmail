@@ -196,10 +196,13 @@ Local authenticated endpoints:
 GET  /emails
 GET  /emails/search?q=website%20assets
 GET  /emails/{email_id}
+GET  /emails/{email_id}/raw
 GET  /emails/{email_id}/attachments
 POST /emails/{email_id}/pull
 GET  /emails/{email_id}/context
 ```
+
+`/emails/{email_id}/raw` returns the original RFC822 `.eml` file as `message/rfc822`, bypassing the parser entirely. Use this if the parsed body is empty or the email is quarantined due to a parse failure.
 
 The CLI uses `AGENTMAIL_API_URL` and `AGENTMAIL_API_TOKEN`.
 

@@ -48,6 +48,7 @@ Authorization: Bearer <AGENTMAIL_API_TOKEN>
 | `GET` | `/emails` | List emails (params: `limit`, `offset`, `since`, `until`, `from`, `to`, `tag`, `has_attachments`) |
 | `GET` | `/emails/search?q=QUERY` | Full-text search |
 | `GET` | `/emails/{id}` | Full email detail including body text and HTML |
+| `GET` | `/emails/{id}/raw` | Original RFC822 `.eml` file, bypasses the parser entirely |
 | `GET` | `/emails/{id}/attachments` | List attachments for an email |
 | `GET` | `/emails/{id}/attachments/{att_id}/download` | Download a single attachment |
 | `GET` | `/emails/{id}/context` | Agent-safe plain-text context block |
@@ -60,6 +61,8 @@ Authorization: Bearer <AGENTMAIL_API_TOKEN>
 2. Search or list emails to find the relevant one.
 3. Fetch full detail with `/emails/{id}` or pull to disk with `/emails/{id}/pull`.
 4. Read `manifest.json` first when using pull.
+5. If `quarantined: true`, check `quarantine_reason` in the email object to understand why.
+6. If the body is empty or parsing failed, fetch `/emails/{id}/raw` to get the original `.eml` and parse it yourself.
 
 ## Addressing
 

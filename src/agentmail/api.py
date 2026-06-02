@@ -126,6 +126,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "has_attachments": bool(row["has_attachments"]),
             "attachment_count": row["attachment_count"],
             "quarantined": bool(row["quarantined"]),
+            "quarantine_reason": row["quarantine_reason"] if row["quarantined"] else None,
         }
 
     def attachment_summary(row: Any) -> dict[str, Any]:
@@ -205,6 +206,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 "list_emails": "GET /emails",
                 "search_emails": "GET /emails/search?q=QUERY",
                 "get_email": "GET /emails/{id}",
+                "raw_email": "GET /emails/{id}/raw",
                 "latest_bundle": "GET /email-bundle/latest?latest=N",
                 "pull_email": "POST /emails/{id}/pull",
                 "email_context": "GET /emails/{id}/context",
@@ -378,6 +380,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "body_html": body_html_path.read_text(encoding="utf-8") if body_html_path and body_html_path.exists() else "",
             "attachments": [attachment_summary(item) for item in db.list_attachments(email_id)],
         }
+
+    @app.get("/emails/{email_id}/raw", dependencies=[Depends(require_api_auth)])
+    def raw_email(email_id: str) -> Response:
+        row = db.get_email(email_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        raw_path = resolve_storage_path(row["raw_path"])
+        if not raw_path or not raw_path.exists():
+            raise HTTPException(status_code=404, detail="Raw EML not found on disk")
+        return Response(raw_path.read_bytes(), media_type="message/rfc822")
 
     @app.get("/emails/{email_id}/attachments", dependencies=[Depends(require_api_auth)])
     def list_email_attachments(email_id: str) -> dict[str, Any]:
