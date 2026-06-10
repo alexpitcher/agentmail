@@ -174,6 +174,125 @@ class IngestService:
             )
         return {"status": "repaired", "inserted": len(attachment_rows)}
 
+    def reprocess(self, email_id: str) -> dict[str, Any]:
+        """Re-parse an email from its raw EML and update all DB fields and body files."""
+        email_row = self.db.get_email(email_id)
+        if email_row is None:
+            raise KeyError(email_id)
+        raw_path = self.settings.storage_root / email_row["raw_path"] if email_row["raw_path"] else None
+        if raw_path is None or not raw_path.exists():
+            raise FileNotFoundError(f"Raw EML not found: {email_row['raw_path']}")
+        raw_bytes = raw_path.read_bytes()
+
+        parsed = None
+        quarantine_reason = None
+        try:
+            parsed = parse_email(raw_bytes)
+        except Exception as exc:
+            quarantine_reason = "parse_failed"
+            parsed_error = str(exc)
+        else:
+            parsed_error = None
+
+        sender = email_row["envelope_from"] or (parsed.header_from if parsed else None)
+        trusted_sender = is_allowed_sender(sender, self.settings.allowed_senders)
+        if not trusted_sender:
+            quarantine_reason = quarantine_reason or "sender_not_allowed"
+
+        email_dir = self.settings.storage_root / "emails" / email_id
+        body_text_path = email_dir / "body.txt"
+        body_html_path = email_dir / "body.html"
+        attachment_rows: list[dict[str, Any]] = []
+
+        if parsed:
+            write_text(body_text_path, parsed.body_text)
+            if parsed.body_html:
+                write_text(body_html_path, parsed.body_html)
+
+            attachments_dir = email_dir / "attachments"
+            blocked_attachments_dir = email_dir / "blocked_attachments"
+            extracted_dir = email_dir / "extracted_text"
+            used_filenames: set[str] = set()
+            existing_att_ids = {row["id"] for row in self.db.list_attachments(email_id)}
+
+            for index, attachment in enumerate(parsed.attachments, start=1):
+                att_id = _attachment_id(email_id, index)
+                if att_id in existing_att_ids:
+                    continue
+                safe_name = dedupe_filename(sanitize_filename(attachment.filename, att_id), used_filenames)
+                size = len(attachment.payload)
+                blocked = is_blocked_extension(safe_name, self.settings.blocked_extensions)
+                block_reason = "blocked_extension" if blocked else None
+                if size > self.settings.max_attachment_bytes:
+                    blocked = True
+                    block_reason = "attachment_too_large"
+                att_sha = hashlib.sha256(attachment.payload).hexdigest()
+                storage_path = (blocked_attachments_dir if blocked else attachments_dir) / safe_name
+                extracted_path: Path | None = None
+                write_bytes(storage_path, attachment.payload)
+                if not blocked:
+                    text = extract_text(safe_name, attachment.content_type, attachment.payload)
+                    if text:
+                        extracted_path = extracted_dir / f"{att_id}.txt"
+                        write_text(extracted_path, text)
+                attachment_rows.append({
+                    "id": att_id,
+                    "email_id": email_id,
+                    "filename": attachment.filename,
+                    "safe_filename": safe_name,
+                    "content_type": attachment.content_type,
+                    "detected_type": mimetypes.guess_type(safe_name)[0],
+                    "size_bytes": size,
+                    "sha256": att_sha,
+                    "storage_path": _relative(self.settings.storage_root, storage_path),
+                    "extracted_text_path": _relative(self.settings.storage_root, extracted_path),
+                    "is_inline": 1 if attachment.is_inline else 0,
+                    "content_id": attachment.content_id,
+                    "blocked": 1 if blocked else 0,
+                    "block_reason": block_reason,
+                    "created_at": now_iso(),
+                })
+
+        total_attachments = len(self.db.list_attachments(email_id)) + len(attachment_rows)
+        updates: dict[str, Any] = {
+            "trusted_sender": 1 if trusted_sender else 0,
+            "quarantined": 1 if quarantine_reason else 0,
+            "quarantine_reason": quarantine_reason,
+            "notes": json.dumps({"parse_error": parsed_error}) if parsed_error else None,
+            "has_attachments": 1 if total_attachments else 0,
+            "attachment_count": total_attachments,
+        }
+        if parsed:
+            updates.update({
+                "subject": parsed.subject,
+                "header_from": parsed.header_from,
+                "header_to": parsed.header_to,
+                "header_cc": parsed.header_cc,
+                "header_bcc": parsed.header_bcc,
+                "reply_to": parsed.reply_to,
+                "message_id": parsed.message_id,
+                "in_reply_to": parsed.in_reply_to,
+                "references_header": parsed.references_header,
+                "received_at": parsed.received_at,
+                "body_text_path": _relative(self.settings.storage_root, body_text_path),
+                "body_html_path": _relative(self.settings.storage_root, body_html_path if parsed.body_html else None),
+            })
+
+        self.db.update_email(email_id, updates)
+        if attachment_rows:
+            self.db.insert_attachments_for_email(email_id, attachment_rows)
+        self.db.audit(now_iso(), "email_reprocessed", email_id=email_id, actor="api", detail={
+            "quarantine_reason": quarantine_reason,
+            "new_attachments": len(attachment_rows),
+        })
+        return {
+            "status": "reprocessed",
+            "email_id": email_id,
+            "quarantined": bool(quarantine_reason),
+            "quarantine_reason": quarantine_reason,
+            "new_attachments": len(attachment_rows),
+        }
+
     def ingest_cloudflare(self, raw_bytes: bytes, headers: dict[str, str]) -> dict[str, str]:
         return self.ingest_raw(
             raw_bytes,

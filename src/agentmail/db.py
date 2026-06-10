@@ -206,6 +206,14 @@ class Database:
                     [att[c] for c in att_cols],
                 )
 
+    def update_email(self, email_id: str, values: dict[str, Any]) -> None:
+        updatable = [c for c in EMAIL_COLUMNS if c in values and c != "id"]
+        if not updatable:
+            return
+        sets = ", ".join(f"{c} = ?" for c in updatable)
+        with self.connect() as db:
+            db.execute(f"UPDATE emails SET {sets} WHERE id = ?", [values[c] for c in updatable] + [email_id])
+
     def insert_attachments_for_email(self, email_id: str, attachment_values: list[dict[str, Any]]) -> None:
         """Insert attachment rows for an existing email (repair operation)."""
         with self.connect() as db:

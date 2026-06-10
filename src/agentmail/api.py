@@ -391,6 +391,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=404, detail="Raw EML not found on disk")
         return Response(raw_path.read_bytes(), media_type="message/rfc822")
 
+    @app.post("/emails/{email_id}/reprocess", dependencies=[Depends(require_api_auth)])
+    def reprocess_email(email_id: str) -> dict[str, Any]:
+        if db.get_email(email_id) is None:
+            raise HTTPException(status_code=404, detail="Email not found")
+        try:
+            return ingest_service.reprocess(email_id)
+        except FileNotFoundError as exc:
+            raise HTTPException(status_code=404, detail=str(exc)) from exc
+
     @app.get("/emails/{email_id}/attachments", dependencies=[Depends(require_api_auth)])
     def list_email_attachments(email_id: str) -> dict[str, Any]:
         if db.get_email(email_id) is None:
